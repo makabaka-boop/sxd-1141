@@ -1,0 +1,20 @@
+.DS_Store
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editor settings
+.idea/
+.vscode/
