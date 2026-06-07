@@ -136,6 +136,15 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, status='pending')
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        task = InspectionTask.objects.get(id=serializer.data['id'])
+        response_serializer = InspectionTaskListSerializer(task)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
     @action(detail=False, methods=['post'], permission_classes=[IsManager])
     def batch_create(self, request):
         serializer = BatchTaskCreateSerializer(data=request.data)

@@ -91,7 +91,7 @@ class TaskReassignmentSerializer(serializers.ModelSerializer):
     original_executor_detail = UserSerializer(source='original_executor', read_only=True)
     new_executor_detail = UserSerializer(source='new_executor', read_only=True)
     operator_detail = UserSerializer(source='operator', read_only=True)
-    task_status_display = serializers.CharField(source='get_task_status_at_time_display', read_only=True)
+    task_status_display = serializers.SerializerMethodField()
 
     class Meta:
         model = TaskReassignment
@@ -100,6 +100,10 @@ class TaskReassignmentSerializer(serializers.ModelSerializer):
                   'task_status_at_time', 'task_status_display', 'operator', 
                   'operator_detail', 'created_at']
         read_only_fields = ['original_executor', 'task_status_at_time', 'operator', 'created_at']
+
+    def get_task_status_display(self, obj):
+        status_map = dict(InspectionTask.STATUS_CHOICES)
+        return status_map.get(obj.task_status_at_time, obj.task_status_at_time)
 
 
 class ReviewRecordSerializer(serializers.ModelSerializer):
@@ -122,16 +126,19 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
         model = InspectionTask
         fields = ['id', 'title', 'store', 'store_name', 'executor', 'executor_detail',
                   'status', 'status_display', 'deadline', 'created_at', 'updated_at',
-                  'latest_reassignment_summary']
+                  'executed_at', 'latest_reassignment_summary']
 
     def get_latest_reassignment_summary(self, obj):
         latest = obj.latest_reassignment
         if latest:
+            status_map = dict(InspectionTask.STATUS_CHOICES)
             return {
                 'id': latest.id,
                 'original_executor': latest.original_executor.username if latest.original_executor else None,
                 'new_executor': latest.new_executor.username if latest.new_executor else None,
                 'reason': latest.reason,
+                'task_status_at_time': latest.task_status_at_time,
+                'task_status_display': status_map.get(latest.task_status_at_time, latest.task_status_at_time),
                 'created_at': latest.created_at
             }
         return None

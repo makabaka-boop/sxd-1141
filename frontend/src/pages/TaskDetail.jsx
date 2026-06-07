@@ -278,6 +278,11 @@ const TaskDetail = () => {
                       description={
                         <div>
                           <div>{review.comment}</div>
+                          {review.rectification_deadline && (
+                            <div style={{ fontSize: 12, color: '#fa8c16', marginTop: 4 }}>
+                              整改截止时间：{dayjs(review.rectification_deadline).format('YYYY-MM-DD HH:mm')}
+                            </div>
+                          )}
                           <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
                             {dayjs(review.created_at).format('YYYY-MM-DD HH:mm')}
                           </div>
