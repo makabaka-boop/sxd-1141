@@ -7,7 +7,7 @@ from django.utils import timezone
 from .models import (
     Store, InspectionItem, TaskTemplate,
     InspectionTask, TaskReassignment, TaskItemResult, ReviewRecord,
-    RectificationRecord, SystemConfig
+    RectificationRecord, ReminderRecord, SystemConfig
 )
 from .serializers import (
     UserSerializer, UserCreateSerializer, StoreSerializer,
@@ -15,8 +15,8 @@ from .serializers import (
     InspectionTaskListSerializer, InspectionTaskDetailSerializer,
     InspectionTaskCreateSerializer, TaskItemResultSerializer,
     TaskReassignmentSerializer, ReviewRecordSerializer,
-    RectificationRecordSerializer, BatchTaskCreateSerializer,
-    SystemConfigSerializer
+    RectificationRecordSerializer, ReminderRecordSerializer,
+    BatchTaskCreateSerializer, SystemConfigSerializer
 )
 
 
@@ -139,6 +139,22 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
         has_rectification = self.request.query_params.get('has_rectification')
         if has_rectification == 'true':
             queryset = queryset.filter(rectifications__isnull=False).exclude(status='finished').distinct()
+
+        reminder_status_filter = self.request.query_params.get('reminder_status')
+        if reminder_status_filter:
+            task_ids = []
+            for task in queryset:
+                reminders = ReminderRecord.objects.filter(rectification__task=task)
+                if reminder_status_filter == 'no_reminder':
+                    if not reminders.exists():
+                        task_ids.append(task.id)
+                elif reminder_status_filter == 'unresponded':
+                    if reminders.exists() and reminders.filter(is_responded=False).exists():
+                        task_ids.append(task.id)
+                elif reminder_status_filter == 'responded':
+                    if reminders.exists() and not reminders.filter(is_responded=False).exists():
+                        task_ids.append(task.id)
+            queryset = queryset.filter(id__in=task_ids)
 
         return queryset.order_by('-created_at')
 
@@ -342,6 +358,59 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
         task.save()
 
         serializer = self.get_serializer(task)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def remind(self, request, pk=None):
+        task = self.get_object()
+        if task.status != 'rejected':
+            return Response({'error': '只有需整改状态的任务可以催办'}, status=status.HTTP_400_BAD_REQUEST)
+        if request.user.profile.role not in ('manager', 'reviewer'):
+            return Response({'error': '只有管理者或复核者可以催办'}, status=status.HTTP_403_FORBIDDEN)
+
+        note = request.data.get('note', '')
+        if not note or not note.strip():
+            return Response({'error': '请填写催办说明'}, status=status.HTTP_400_BAD_REQUEST)
+
+        latest_rect = task.rectifications.filter(submitted_at__isnull=True).order_by('-round_number').first()
+        if not latest_rect:
+            return Response({'error': '未找到当前整改轮次'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reminder = ReminderRecord.objects.create(
+            rectification=latest_rect,
+            reminded_by=request.user,
+            note=note,
+        )
+
+        serializer = ReminderRecordSerializer(reminder)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def respond_reminder(self, request, pk=None):
+        task = self.get_object()
+        if request.user.profile.role != 'executor' or task.executor != request.user:
+            return Response({'error': '只有任务执行者可以响应催办'}, status=status.HTTP_403_FORBIDDEN)
+
+        reminder_id = request.data.get('reminder_id')
+        response_note = request.data.get('response_note', '')
+
+        if not reminder_id:
+            return Response({'error': '请指定催办记录'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            reminder = ReminderRecord.objects.get(id=reminder_id, rectification__task=task)
+        except ReminderRecord.DoesNotExist:
+            return Response({'error': '催办记录不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+        if reminder.is_responded:
+            return Response({'error': '该催办已响应'}, status=status.HTTP_400_BAD_REQUEST)
+
+        reminder.is_responded = True
+        reminder.response_note = response_note
+        reminder.responded_at = timezone.now()
+        reminder.save()
+
+        serializer = ReminderRecordSerializer(reminder)
         return Response(serializer.data)
 
 

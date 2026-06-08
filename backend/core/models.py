@@ -178,6 +178,22 @@ class RectificationRecord(models.Model):
         return False
 
 
+class ReminderRecord(models.Model):
+    rectification = models.ForeignKey(RectificationRecord, on_delete=models.CASCADE, related_name='reminders')
+    reminded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='sent_reminders')
+    note = models.TextField()
+    is_responded = models.BooleanField(default=False)
+    response_note = models.TextField(blank=True, null=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.rectification.task.title} - 催办记录(第{self.rectification.round_number}轮)'
+
+
 class SystemConfig(models.Model):
     key = models.CharField(max_length=100, unique=True)
     value = models.CharField(max_length=500)

@@ -17,7 +17,8 @@ import {
   Row,
   Col,
   Avatar,
-  Alert
+  Alert,
+  Modal
 } from 'antd';
 import { 
   ArrowLeftOutlined, 
@@ -28,7 +29,8 @@ import {
   WarningOutlined,
   EditOutlined,
   ClockCircleOutlined,
-  FileProtectOutlined
+  FileProtectOutlined,
+  BellOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import api from '../utils/api';
@@ -45,8 +47,15 @@ const TaskDetail = () => {
   const [submitLoading, setSubmitLoading] = useState(false);
   const [rectificationLoading, setRectificationLoading] = useState(false);
   const [rectificationDescription, setRectificationDescription] = useState('');
+  const [remindModalVisible, setRemindModalVisible] = useState(false);
+  const [remindNote, setRemindNote] = useState('');
+  const [remindLoading, setRemindLoading] = useState(false);
+  const [responseModalVisible, setResponseModalVisible] = useState(false);
+  const [responseReminderId, setResponseReminderId] = useState(null);
+  const [responseNote, setResponseNote] = useState('');
+  const [responseLoading, setResponseLoading] = useState(false);
   const [form] = Form.useForm();
-  const { isExecutor, isReviewer, user } = useAuth();
+  const { isExecutor, isReviewer, isManager, user } = useAuth();
 
   const statusMap = {
     pending: { color: 'default', text: '待执行' },
@@ -153,6 +162,69 @@ const TaskDetail = () => {
     return task.status === 'rejected';
   };
 
+  const canRemind = () => {
+    if (!task) return false;
+    if (task.status !== 'rejected') return false;
+    return isManager() || isReviewer();
+  };
+
+  const getLatestUnrespondedReminders = () => {
+    if (!task?.rectifications) return [];
+    const latestRect = task.rectifications
+      .filter(r => !r.submitted_at)
+      .sort((a, b) => b.round_number - a.round_number)[0];
+    if (!latestRect?.reminders) return [];
+    return latestRect.reminders.filter(r => !r.is_responded);
+  };
+
+  const getLatestReminders = () => {
+    if (!task?.rectifications) return [];
+    const latestRect = task.rectifications
+      .filter(r => !r.submitted_at)
+      .sort((a, b) => b.round_number - a.round_number)[0];
+    if (!latestRect?.reminders) return [];
+    return latestRect.reminders;
+  };
+
+  const handleRemind = async () => {
+    if (!remindNote.trim()) {
+      message.warning('请填写催办说明');
+      return;
+    }
+    setRemindLoading(true);
+    try {
+      await api.post(`/tasks/${id}/remind/`, { note: remindNote });
+      message.success('催办已发送');
+      setRemindModalVisible(false);
+      setRemindNote('');
+      fetchTaskDetail();
+    } catch (error) {
+      message.error(error.response?.data?.error || '催办发送失败');
+    } finally {
+      setRemindLoading(false);
+    }
+  };
+
+  const handleRespondReminder = async () => {
+    if (!responseReminderId) return;
+    setResponseLoading(true);
+    try {
+      await api.post(`/tasks/${id}/respond_reminder/`, {
+        reminder_id: responseReminderId,
+        response_note: responseNote,
+      });
+      message.success('催办响应已提交');
+      setResponseModalVisible(false);
+      setResponseNote('');
+      setResponseReminderId(null);
+      fetchTaskDetail();
+    } catch (error) {
+      message.error(error.response?.data?.error || '催办响应失败');
+    } finally {
+      setResponseLoading(false);
+    }
+  };
+
   const getLatestPendingRectification = () => {
     if (!task?.rectifications) return null;
     return task.rectifications
@@ -173,6 +245,8 @@ const TaskDetail = () => {
     approved: <CheckCircleOutlined style={{ fontSize: 16 }} />,
     rectification_submitted: <EditOutlined style={{ fontSize: 16 }} />,
     deadline_set: <ClockCircleOutlined style={{ fontSize: 16 }} />,
+    reminder_sent: <BellOutlined style={{ fontSize: 16 }} />,
+    reminder_responded: <CheckCircleOutlined style={{ fontSize: 16 }} />,
   };
 
   const timelineColorMap = {
@@ -182,6 +256,8 @@ const TaskDetail = () => {
     approved: '#52c41a',
     rectification_submitted: '#fa8c16',
     deadline_set: '#722ed1',
+    reminder_sent: '#eb2f96',
+    reminder_responded: '#13c2c2',
   };
 
   if (!task) return <div>加载中...</div>;
@@ -246,7 +322,17 @@ const TaskDetail = () => {
                   <span>整改跟踪</span>
                   <Tag color="error">第{latestRect.round_number}轮整改</Tag>
                 </Space>
-              } 
+              }
+              extra={canRemind() && (
+                <Button 
+                  type="primary" 
+                  danger
+                  icon={<BellOutlined />}
+                  onClick={() => setRemindModalVisible(true)}
+                >
+                  催办
+                </Button>
+              )}
               style={{ marginBottom: 16 }}
             >
               {latestRect.is_overdue && (
@@ -275,6 +361,65 @@ const TaskDetail = () => {
                   </Space>
                 </Descriptions.Item>
               </Descriptions>
+
+              {getLatestReminders().length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                    <BellOutlined style={{ marginRight: 4, color: '#eb2f96' }} />
+                    催办记录
+                  </Text>
+                  {getLatestReminders().map((reminder) => (
+                    <div 
+                      key={reminder.id} 
+                      style={{ 
+                        padding: 12, 
+                        background: '#fff7e6', 
+                        borderRadius: 8, 
+                        marginBottom: 8,
+                        borderLeft: `3px solid ${reminder.is_responded ? '#52c41a' : '#eb2f96'}`
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Text strong style={{ color: '#eb2f96' }}>
+                          催办说明
+                        </Text>
+                        <Space>
+                          <Tag color={reminder.is_responded ? 'success' : 'warning'}>
+                            {reminder.is_responded ? '已响应' : '未响应'}
+                          </Tag>
+                          {isExecutor() && !reminder.is_responded && task.executor_detail?.id === user?.id && (
+                            <Button 
+                              size="small" 
+                              type="primary"
+                              onClick={() => {
+                                setResponseReminderId(reminder.id);
+                                setResponseModalVisible(true);
+                              }}
+                            >
+                              响应
+                            </Button>
+                          )}
+                        </Space>
+                      </div>
+                      <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>
+                        {reminder.note}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+                        催办人：{reminder.reminded_by_detail?.username || '未知'} | {dayjs(reminder.created_at).format('YYYY-MM-DD HH:mm')}
+                      </div>
+                      {reminder.is_responded && reminder.response_note && (
+                        <div style={{ marginTop: 8, padding: 8, background: '#f6ffed', borderRadius: 4 }}>
+                          <Text strong style={{ color: '#52c41a', fontSize: 12 }}>响应说明：</Text>
+                          <div style={{ fontSize: 12, color: '#666' }}>{reminder.response_note}</div>
+                          <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>
+                            响应时间：{dayjs(reminder.responded_at).format('YYYY-MM-DD HH:mm')}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {canSubmitRectification() && (
                 <div>
@@ -508,6 +653,11 @@ const TaskDetail = () => {
                           ) : (
                             <Tag color="processing">整改中</Tag>
                           )}
+                          {rect.reminders?.length > 0 && (
+                            <Tag color="#eb2f96" icon={<BellOutlined />}>
+                              催办{rect.reminders.length}次
+                            </Tag>
+                          )}
                         </Space>
                       }
                       description={
@@ -535,6 +685,25 @@ const TaskDetail = () => {
                               驳回意见：{rect.review_record_detail.comment}
                             </div>
                           )}
+                          {rect.reminders?.length > 0 && (
+                            <div style={{ marginTop: 8, padding: 8, background: '#fff7e6', borderRadius: 4 }}>
+                              <Text strong style={{ fontSize: 12, color: '#eb2f96' }}>催办记录：</Text>
+                              {rect.reminders.map((rm) => (
+                                <div key={rm.id} style={{ fontSize: 12, color: '#666', marginTop: 4, borderLeft: '2px solid #eb2f96', paddingLeft: 8 }}>
+                                  <div>{rm.note}</div>
+                                  <div style={{ color: '#999' }}>
+                                    催办人：{rm.reminded_by_detail?.username || '未知'} | {dayjs(rm.created_at).format('YYYY-MM-DD HH:mm')}
+                                    <Tag color={rm.is_responded ? 'success' : 'warning'} style={{ marginLeft: 4, fontSize: 11 }}>
+                                      {rm.is_responded ? '已响应' : '未响应'}
+                                    </Tag>
+                                  </div>
+                                  {rm.is_responded && rm.response_note && (
+                                    <div style={{ color: '#52c41a', marginTop: 2 }}>响应：{rm.response_note}</div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       }
                     />
@@ -545,6 +714,62 @@ const TaskDetail = () => {
           )}
         </Col>
       </Row>
+
+      <Modal
+        title={
+          <Space>
+            <BellOutlined style={{ color: '#eb2f96' }} />
+            <span>发起催办</span>
+          </Space>
+        }
+        open={remindModalVisible}
+        onOk={handleRemind}
+        onCancel={() => {
+          setRemindModalVisible(false);
+          setRemindNote('');
+        }}
+        confirmLoading={remindLoading}
+        okText="发送催办"
+        cancelText="取消"
+      >
+        <div style={{ marginBottom: 16 }}>
+          <p><strong>任务：</strong>{task?.title}</p>
+          <p><strong>当前整改轮次：</strong>第{task?.current_rectification_round}轮</p>
+        </div>
+        <Text strong style={{ display: 'block', marginBottom: 8 }}>
+          催办说明 <Text type="danger">*</Text>
+        </Text>
+        <TextArea
+          rows={4}
+          placeholder="请填写催办说明，提醒执行者尽快完成整改"
+          value={remindNote}
+          onChange={(e) => setRemindNote(e.target.value)}
+        />
+      </Modal>
+
+      <Modal
+        title="响应催办"
+        open={responseModalVisible}
+        onOk={handleRespondReminder}
+        onCancel={() => {
+          setResponseModalVisible(false);
+          setResponseNote('');
+          setResponseReminderId(null);
+        }}
+        confirmLoading={responseLoading}
+        okText="提交响应"
+        cancelText="取消"
+      >
+        <Text strong style={{ display: 'block', marginBottom: 8 }}>
+          响应说明
+        </Text>
+        <TextArea
+          rows={4}
+          placeholder="请填写催办响应说明，描述当前整改进展"
+          value={responseNote}
+          onChange={(e) => setResponseNote(e.target.value)}
+        />
+      </Modal>
     </div>
   );
 };

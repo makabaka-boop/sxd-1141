@@ -3,7 +3,7 @@ from django.contrib.auth.models import User
 from .models import (
     UserProfile, Store, InspectionItem, TaskTemplate,
     InspectionTask, TaskReassignment, TaskItemResult, ReviewRecord,
-    RectificationRecord, SystemConfig
+    RectificationRecord, ReminderRecord, SystemConfig
 )
 
 
@@ -120,13 +120,28 @@ class ReviewRecordSerializer(serializers.ModelSerializer):
 class RectificationRecordSerializer(serializers.ModelSerializer):
     review_record_detail = ReviewRecordSerializer(source='review_record', read_only=True)
     is_overdue = serializers.BooleanField(read_only=True)
+    reminders = serializers.SerializerMethodField()
 
     class Meta:
         model = RectificationRecord
         fields = ['id', 'task', 'round_number', 'review_record', 'review_record_detail',
                   'description', 'rectification_deadline', 'submitted_at',
-                  'is_overdue', 'created_at', 'updated_at']
+                  'is_overdue', 'reminders', 'created_at', 'updated_at']
         read_only_fields = ['round_number', 'submitted_at', 'created_at', 'updated_at']
+
+    def get_reminders(self, obj):
+        reminders = obj.reminders.all()
+        return ReminderRecordSerializer(reminders, many=True).data
+
+
+class ReminderRecordSerializer(serializers.ModelSerializer):
+    reminded_by_detail = UserSerializer(source='reminded_by', read_only=True)
+
+    class Meta:
+        model = ReminderRecord
+        fields = ['id', 'rectification', 'reminded_by', 'reminded_by_detail',
+                  'note', 'is_responded', 'response_note', 'responded_at', 'created_at']
+        read_only_fields = ['is_responded', 'response_note', 'responded_at', 'created_at']
 
 
 class InspectionTaskListSerializer(serializers.ModelSerializer):
@@ -138,6 +153,9 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
     current_rectification_round = serializers.IntegerField(read_only=True)
     latest_rectification_submitted_at = serializers.SerializerMethodField()
     latest_rectification_is_overdue = serializers.SerializerMethodField()
+    reminder_count = serializers.SerializerMethodField()
+    latest_reminder_at = serializers.SerializerMethodField()
+    reminder_response_status = serializers.SerializerMethodField()
 
     class Meta:
         model = InspectionTask
@@ -145,7 +163,8 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
                   'status', 'status_display', 'deadline', 'created_at', 'updated_at',
                   'executed_at', 'latest_reassignment_summary', 'rectification_status',
                   'current_rectification_round', 'latest_rectification_submitted_at',
-                  'latest_rectification_is_overdue']
+                  'latest_rectification_is_overdue', 'reminder_count', 'latest_reminder_at',
+                  'reminder_response_status']
 
     def get_latest_reassignment_summary(self, obj):
         latest = obj.latest_reassignment
@@ -169,6 +188,24 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
     def get_latest_rectification_is_overdue(self, obj):
         latest = obj.rectifications.order_by('-round_number').first()
         return latest.is_overdue if latest else False
+
+    def get_reminder_count(self, obj):
+        from .models import ReminderRecord
+        return ReminderRecord.objects.filter(rectification__task=obj).count()
+
+    def get_latest_reminder_at(self, obj):
+        from .models import ReminderRecord
+        latest = ReminderRecord.objects.filter(rectification__task=obj).order_by('-created_at').first()
+        return latest.created_at if latest else None
+
+    def get_reminder_response_status(self, obj):
+        from .models import ReminderRecord
+        reminders = ReminderRecord.objects.filter(rectification__task=obj)
+        if not reminders.exists():
+            return 'no_reminder'
+        if reminders.filter(is_responded=False).exists():
+            return 'unresponded'
+        return 'responded'
 
 
 class InspectionTaskDetailSerializer(serializers.ModelSerializer):
@@ -197,6 +234,7 @@ class InspectionTaskDetailSerializer(serializers.ModelSerializer):
                   'rectification_deadline_days', 'timeline']
 
     def get_timeline(self, obj):
+        from .models import ReminderRecord
         events = []
         events.append({
             'type': 'created',
@@ -222,6 +260,21 @@ class InspectionTaskDetailSerializer(serializers.ModelSerializer):
                         'time': rect.created_at,
                         'detail': f'第{rect.round_number}轮整改截止: {rect.rectification_deadline.strftime("%Y-%m-%d %H:%M")}',
                     })
+                for reminder in rect.reminders.all().order_by('created_at'):
+                    events.append({
+                        'type': 'reminder_sent',
+                        'label': f'催办(第{rect.round_number}轮)',
+                        'time': reminder.created_at,
+                        'detail': f'催办人: {reminder.reminded_by.username if reminder.reminded_by else "未知"}\n催办说明: {reminder.note}',
+                    })
+                    if reminder.is_responded and reminder.responded_at:
+                        response_detail = f'响应说明: {reminder.response_note or "无"}'
+                        events.append({
+                            'type': 'reminder_responded',
+                            'label': f'催办响应(第{rect.round_number}轮)',
+                            'time': reminder.responded_at,
+                            'detail': response_detail,
+                        })
             if rect.submitted_at:
                 events.append({
                     'type': 'rectification_submitted',

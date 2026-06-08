@@ -4,9 +4,10 @@ import {
   Tag,
   Button,
   Select,
+  Space,
   Typography
 } from 'antd';
-import { EyeOutlined, WarningOutlined } from '@ant-design/icons';
+import { EyeOutlined, WarningOutlined, BellOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../utils/api';
@@ -18,12 +19,19 @@ const RectificationList = () => {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [rectificationStatusFilter, setRectificationStatusFilter] = useState();
+  const [reminderStatusFilter, setReminderStatusFilter] = useState();
   const navigate = useNavigate();
 
   const rectificationStatusMap = {
     rectifying: { color: 'processing', text: '整改中' },
     pending_review: { color: 'warning', text: '待复核' },
     overdue: { color: 'error', text: '已超期' },
+  };
+
+  const reminderStatusMap = {
+    no_reminder: { color: 'default', text: '未催办' },
+    unresponded: { color: 'warning', text: '已催办未响应' },
+    responded: { color: 'success', text: '已响应' },
   };
 
   const taskStatusMap = {
@@ -42,6 +50,9 @@ const RectificationList = () => {
       if (rectificationStatusFilter) {
         params.rectification_status = rectificationStatusFilter;
       }
+      if (reminderStatusFilter) {
+        params.reminder_status = reminderStatusFilter;
+      }
       const response = await api.get('/tasks/', { params });
       setTasks(response.data);
     } catch (error) {
@@ -53,7 +64,7 @@ const RectificationList = () => {
 
   useEffect(() => {
     fetchTasks();
-  }, [rectificationStatusFilter]);
+  }, [rectificationStatusFilter, reminderStatusFilter]);
 
   const columns = [
     {
@@ -100,6 +111,30 @@ const RectificationList = () => {
       render: (round) => round ? `第${round}轮` : '-',
     },
     {
+      title: '催办次数',
+      dataIndex: 'reminder_count',
+      key: 'reminder_count',
+      render: (count) => count > 0 ? (
+        <Tag color="#eb2f96" icon={<BellOutlined />}>{count}次</Tag>
+      ) : <span style={{ color: '#999' }}>0</span>,
+    },
+    {
+      title: '最近催办',
+      dataIndex: 'latest_reminder_at',
+      key: 'latest_reminder_at',
+      render: (date) => date ? dayjs(date).format('YYYY-MM-DD HH:mm') : <span style={{ color: '#999' }}>-</span>,
+    },
+    {
+      title: '催办响应',
+      dataIndex: 'reminder_response_status',
+      key: 'reminder_response_status',
+      render: (status) => {
+        if (!status) return <span style={{ color: '#999' }}>-</span>;
+        const info = reminderStatusMap[status] || { color: 'default', text: status };
+        return <Tag color={info.color}>{info.text}</Tag>;
+      },
+    },
+    {
       title: '最近整改提交',
       dataIndex: 'latest_rectification_submitted_at',
       key: 'submitted_at',
@@ -135,17 +170,30 @@ const RectificationList = () => {
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <Select
-          placeholder="筛选整改状态"
-          style={{ width: 200 }}
-          allowClear
-          value={rectificationStatusFilter}
-          onChange={setRectificationStatusFilter}
-        >
-          {Object.entries(rectificationStatusMap).map(([key, value]) => (
-            <Option key={key} value={key}>{value.text}</Option>
-          ))}
-        </Select>
+        <Space>
+          <Select
+            placeholder="筛选整改状态"
+            style={{ width: 200 }}
+            allowClear
+            value={rectificationStatusFilter}
+            onChange={setRectificationStatusFilter}
+          >
+            {Object.entries(rectificationStatusMap).map(([key, value]) => (
+              <Option key={key} value={key}>{value.text}</Option>
+            ))}
+          </Select>
+          <Select
+            placeholder="筛选催办响应状态"
+            style={{ width: 200 }}
+            allowClear
+            value={reminderStatusFilter}
+            onChange={setReminderStatusFilter}
+          >
+            {Object.entries(reminderStatusMap).map(([key, value]) => (
+              <Option key={key} value={key}>{value.text}</Option>
+            ))}
+          </Select>
+        </Space>
       </div>
 
       <Table
