@@ -28,7 +28,7 @@ const BasicData = () => {
   const [inspectionItems, setInspectionItems] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [allItems, setAllItems] = useState([]);
-  const [systemConfig, setSystemConfig] = useState({ default_rectification_deadline_days: 3 });
+  const [defaultRectificationDays, setDefaultRectificationDays] = useState(3);
   
   const [storeModalVisible, setStoreModalVisible] = useState(false);
   const [itemModalVisible, setItemModalVisible] = useState(false);
@@ -41,7 +41,6 @@ const BasicData = () => {
   const [storeForm] = Form.useForm();
   const [itemForm] = Form.useForm();
   const [templateForm] = Form.useForm();
-  const [configForm] = Form.useForm();
 
   const fetchStores = async () => {
     try {
@@ -71,10 +70,31 @@ const BasicData = () => {
     }
   };
 
+  const fetchConfig = async () => {
+    try {
+      const response = await api.get('/system-config/default_rectification_deadline_days/');
+      setDefaultRectificationDays(response.data.value);
+    } catch (error) {
+      console.error('获取配置失败', error);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    try {
+      await api.post('/system-config/set_default_rectification_deadline_days/', {
+        value: defaultRectificationDays,
+      });
+      message.success('配置已保存');
+    } catch (error) {
+      message.error('保存配置失败');
+    }
+  };
+
   useEffect(() => {
     fetchStores();
     fetchInspectionItems();
     fetchTemplates();
+    fetchConfig();
   }, []);
 
   const handleSaveStore = async (values) => {
@@ -414,18 +434,13 @@ const BasicData = () => {
       label: '系统配置',
       children: (
         <div>
-          <Form form={configForm} layout="vertical" initialValues={systemConfig} onFinish={() => {
-            const values = configForm.getFieldsValue();
-            setSystemConfig(values);
-            message.success('配置已保存');
-          }}>
-            <Form.Item name="default_rectification_deadline_days" label="默认整改时限(天)" rules={[{ required: true, message: '请输入整改时限' }]}>
-              <InputNumber min={1} max={30} style={{ width: 200 }} placeholder="默认3天" />
-            </Form.Item>
-            <Form.Item>
-              <Button type="primary" htmlType="submit">保存配置</Button>
-            </Form.Item>
-          </Form>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', marginBottom: 8, fontWeight: 500 }}>默认整改时限(天)</label>
+            <Space>
+              <InputNumber min={1} max={30} value={defaultRectificationDays} onChange={(val) => setDefaultRectificationDays(val)} style={{ width: 200 }} placeholder="默认3天" />
+              <Button type="primary" onClick={handleSaveConfig}>保存配置</Button>
+            </Space>
+          </div>
           <div style={{ marginTop: 16, padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
             <Typography.Text type="secondary">
               此配置将作为创建任务时的默认整改时限，复核人驳回任务后系统将据此自动计算整改截止时间。创建任务时仍可单独修改。

@@ -7,7 +7,7 @@ from django.utils import timezone
 from .models import (
     Store, InspectionItem, TaskTemplate,
     InspectionTask, TaskReassignment, TaskItemResult, ReviewRecord,
-    RectificationRecord
+    RectificationRecord, SystemConfig
 )
 from .serializers import (
     UserSerializer, UserCreateSerializer, StoreSerializer,
@@ -15,7 +15,8 @@ from .serializers import (
     InspectionTaskListSerializer, InspectionTaskDetailSerializer,
     InspectionTaskCreateSerializer, TaskItemResultSerializer,
     TaskReassignmentSerializer, ReviewRecordSerializer,
-    RectificationRecordSerializer, BatchTaskCreateSerializer
+    RectificationRecordSerializer, BatchTaskCreateSerializer,
+    SystemConfigSerializer
 )
 
 
@@ -137,7 +138,7 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
 
         has_rectification = self.request.query_params.get('has_rectification')
         if has_rectification == 'true':
-            queryset = queryset.filter(rectifications__isnull=False).distinct()
+            queryset = queryset.filter(rectifications__isnull=False).exclude(status='finished').distinct()
 
         return queryset.order_by('-created_at')
 
@@ -315,6 +316,8 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
             return Response({'error': '只有任务执行者可以提交整改'}, status=status.HTTP_403_FORBIDDEN)
 
         description = request.data.get('description', '')
+        if not description or not description.strip():
+            return Response({'error': '请填写整改说明'}, status=status.HTTP_400_BAD_REQUEST)
         results = request.data.get('results', [])
 
         for result_data in results:
@@ -353,3 +356,31 @@ class TaskItemResultViewSet(viewsets.ModelViewSet):
         if task_id:
             queryset = queryset.filter(task_id=task_id)
         return queryset
+
+
+class SystemConfigViewSet(viewsets.ModelViewSet):
+    queryset = SystemConfig.objects.all()
+    serializer_class = SystemConfigSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsManager()]
+        return [permissions.IsAuthenticated()]
+
+    @action(detail=False, methods=['get'])
+    def default_rectification_deadline_days(self, request):
+        config, _ = SystemConfig.objects.get_or_create(
+            key='default_rectification_deadline_days',
+            defaults={'value': '3'}
+        )
+        return Response({'key': config.key, 'value': int(config.value)})
+
+    @action(detail=False, methods=['post'], permission_classes=[IsManager])
+    def set_default_rectification_deadline_days(self, request):
+        days = request.data.get('value', 3)
+        config, _ = SystemConfig.objects.update_or_create(
+            key='default_rectification_deadline_days',
+            defaults={'value': str(days)}
+        )
+        return Response({'key': config.key, 'value': int(config.value)})

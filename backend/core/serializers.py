@@ -3,7 +3,7 @@ from django.contrib.auth.models import User
 from .models import (
     UserProfile, Store, InspectionItem, TaskTemplate,
     InspectionTask, TaskReassignment, TaskItemResult, ReviewRecord,
-    RectificationRecord
+    RectificationRecord, SystemConfig
 )
 
 
@@ -204,48 +204,53 @@ class InspectionTaskDetailSerializer(serializers.ModelSerializer):
             'time': obj.created_at,
             'detail': f'创建人: {obj.created_by.username if obj.created_by else "未知"}',
         })
-        if obj.executed_at:
-            latest_rect = obj.rectifications.filter(submitted_at__isnull=False).order_by('-submitted_at').first()
-            if latest_rect:
-                events.append({
-                    'type': 'rectification_submitted',
-                    'label': f'整改提交(第{latest_rect.round_number}轮)',
-                    'time': latest_rect.submitted_at,
-                    'detail': latest_rect.description or '',
-                })
-            else:
-                events.append({
-                    'type': 'executed',
-                    'label': '首次提交执行结果',
-                    'time': obj.executed_at,
-                    'detail': f'执行人: {obj.executor.username if obj.executor else "未知"}',
-                })
-        for review in obj.reviews.all():
+
+        first_submission = True
+        for rect in obj.rectifications.all().order_by('round_number'):
+            review = rect.review_record
             if not review.is_approved:
-                rect = obj.rectifications.filter(review_record=review).first()
                 events.append({
                     'type': 'rejected',
-                    'label': f'复核驳回(第{rect.round_number}轮整改)' if rect else '复核驳回',
+                    'label': f'复核驳回(进入第{rect.round_number}轮整改)',
                     'time': review.created_at,
                     'detail': review.comment or '',
                 })
-            else:
+                if rect.rectification_deadline:
+                    events.append({
+                        'type': 'deadline_set',
+                        'label': f'整改截止时间设定',
+                        'time': rect.created_at,
+                        'detail': f'第{rect.round_number}轮整改截止: {rect.rectification_deadline.strftime("%Y-%m-%d %H:%M")}',
+                    })
+            if rect.submitted_at:
+                events.append({
+                    'type': 'rectification_submitted',
+                    'label': f'整改提交(第{rect.round_number}轮)',
+                    'time': rect.submitted_at,
+                    'detail': rect.description or '',
+                })
+
+        if obj.executed_at and not obj.rectifications.filter(round_number=1, submitted_at__isnull=False).exists():
+            events.append({
+                'type': 'executed',
+                'label': '首次提交执行结果',
+                'time': obj.executed_at,
+                'detail': f'执行人: {obj.executor.username if obj.executor else "未知"}',
+            })
+
+        for review in obj.reviews.all():
+            if review.is_approved:
+                rect = obj.rectifications.filter(review_record=review).first()
+                label = '复核通过'
+                if rect:
+                    label = f'复核通过(第{rect.round_number}轮整改后)' if rect.submitted_at else '复核通过'
                 events.append({
                     'type': 'approved',
-                    'label': '复核通过',
+                    'label': label,
                     'time': review.created_at,
                     'detail': review.comment or '',
                 })
-        for rect in obj.rectifications.all():
-            if rect.submitted_at:
-                already = any(e['type'] == 'rectification_submitted' and e.get('detail') == rect.description for e in events)
-                if not already:
-                    events.append({
-                        'type': 'rectification_submitted',
-                        'label': f'整改提交(第{rect.round_number}轮)',
-                        'time': rect.submitted_at,
-                        'detail': rect.description or '',
-                    })
+
         events.sort(key=lambda e: e['time'] if e['time'] else obj.created_at)
         return events
 
@@ -278,3 +283,10 @@ class BatchTaskCreateSerializer(serializers.Serializer):
     deadline = serializers.DateTimeField(required=False, allow_null=True)
     remark = serializers.CharField(required=False, allow_blank=True)
     rectification_deadline_days = serializers.IntegerField(required=False, default=3)
+
+
+class SystemConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SystemConfig
+        fields = ['id', 'key', 'value', 'updated_at']
+        read_only_fields = ['updated_at']

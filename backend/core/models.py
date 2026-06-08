@@ -176,3 +176,12 @@ class RectificationRecord(models.Model):
         if self.rectification_deadline and timezone.now() > self.rectification_deadline:
             return True
         return False
+
+
+class SystemConfig(models.Model):
+    key = models.CharField(max_length=100, unique=True)
+    value = models.CharField(max_length=500)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f'{self.key}: {self.value}'

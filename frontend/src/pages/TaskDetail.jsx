@@ -112,6 +112,10 @@ const TaskDetail = () => {
   };
 
   const handleSubmitRectification = async () => {
+    if (!rectificationDescription.trim()) {
+      message.warning('请填写整改说明');
+      return;
+    }
     try {
       const values = await form.validateFields();
       const results = task.item_results.map(item => ({
@@ -168,6 +172,7 @@ const TaskDetail = () => {
     rejected: <CloseCircleOutlined style={{ fontSize: 16 }} />,
     approved: <CheckCircleOutlined style={{ fontSize: 16 }} />,
     rectification_submitted: <EditOutlined style={{ fontSize: 16 }} />,
+    deadline_set: <ClockCircleOutlined style={{ fontSize: 16 }} />,
   };
 
   const timelineColorMap = {
@@ -176,6 +181,7 @@ const TaskDetail = () => {
     rejected: '#ff4d4f',
     approved: '#52c41a',
     rectification_submitted: '#fa8c16',
+    deadline_set: '#722ed1',
   };
 
   if (!task) return <div>加载中...</div>;
@@ -272,10 +278,12 @@ const TaskDetail = () => {
 
               {canSubmitRectification() && (
                 <div>
-                  <Text strong style={{ display: 'block', marginBottom: 8 }}>整改说明</Text>
+                  <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                    整改说明 <Text type="danger">*</Text>
+                  </Text>
                   <TextArea
                     rows={4}
-                    placeholder="请填写整改说明，描述已完成的整改措施"
+                    placeholder="请填写整改说明，描述已完成的整改措施（必填）"
                     value={rectificationDescription}
                     onChange={(e) => setRectificationDescription(e.target.value)}
                     style={{ marginBottom: 12 }}

@@ -22,7 +22,8 @@ import {
   SwapOutlined,
   PlayCircleOutlined, 
   SendOutlined,
-  WarningOutlined
+  WarningOutlined,
+  EditOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -247,13 +248,22 @@ const TaskList = () => {
               开始执行
             </Button>
           )}
-          {isExecutor() && record.executor_detail?.id === user?.id && ['executing', 'rejected'].includes(record.status) && (
+          {isExecutor() && record.executor_detail?.id === user?.id && record.status === 'executing' && (
             <Button 
               type="link" 
               icon={<SendOutlined />}
               onClick={() => navigate(`/tasks/${record.id}`)}
             >
               填写结果
+            </Button>
+          )}
+          {isExecutor() && record.executor_detail?.id === user?.id && record.status === 'rejected' && (
+            <Button 
+              type="link" 
+              icon={<EditOutlined />}
+              onClick={() => navigate(`/tasks/${record.id}`)}
+            >
+              提交整改
             </Button>
           )}
           {isManager() && (
