@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import TaskList from './pages/TaskList';
 import TaskDetail from './pages/TaskDetail';
 import ReviewList from './pages/ReviewList';
+import RectificationList from './pages/RectificationList';
 import BasicData from './pages/BasicData';
 
 const ProtectedRoute = () => {
@@ -78,6 +79,7 @@ function App() {
               <Route path="/" element={<Navigate to="/tasks" replace />} />
               <Route path="/tasks" element={<TaskList />} />
               <Route path="/tasks/:id" element={<TaskDetail />} />
+              <Route path="/rectifications" element={<RectificationList />} />
               <Route element={<ReviewerRoute />}>
                 <Route path="/reviews" element={<ReviewList />} />
               </Route>

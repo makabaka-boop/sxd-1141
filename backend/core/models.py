@@ -72,6 +72,7 @@ class InspectionTask(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='created_tasks')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
     deadline = models.DateTimeField(null=True, blank=True)
+    rectification_deadline_days = models.IntegerField(default=3)
     remark = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -84,6 +85,27 @@ class InspectionTask(models.Model):
     @property
     def latest_reassignment(self):
         return self.reassignments.order_by('-created_at').first()
+
+    @property
+    def current_rectification_round(self):
+        latest = self.rectifications.order_by('-round_number').first()
+        return latest.round_number if latest else 0
+
+    @property
+    def rectification_status(self):
+        if self.status not in ('rejected', 'reviewing'):
+            return None
+        if self.status == 'rejected':
+            latest_rect = self.rectifications.filter(submitted_at__isnull=True).order_by('-round_number').first()
+            if latest_rect and latest_rect.rectification_deadline:
+                if timezone.now() > latest_rect.rectification_deadline:
+                    return 'overdue'
+            return 'rectifying'
+        if self.status == 'reviewing':
+            has_unreviewed = self.rectifications.filter(submitted_at__isnull=False).exists()
+            if has_unreviewed:
+                return 'pending_review'
+        return None
 
 
 class TaskReassignment(models.Model):
@@ -129,3 +151,28 @@ class ReviewRecord(models.Model):
 
     def __str__(self):
         return f'{self.task.title} - 复核记录'
+
+
+class RectificationRecord(models.Model):
+    task = models.ForeignKey(InspectionTask, on_delete=models.CASCADE, related_name='rectifications')
+    round_number = models.IntegerField()
+    review_record = models.ForeignKey(ReviewRecord, on_delete=models.CASCADE, related_name='rectifications')
+    description = models.TextField(blank=True, null=True)
+    rectification_deadline = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['round_number']
+
+    def __str__(self):
+        return f'{self.task.title} - 整改第{self.round_number}轮'
+
+    @property
+    def is_overdue(self):
+        if self.submitted_at:
+            return False
+        if self.rectification_deadline and timezone.now() > self.rectification_deadline:
+            return True
+        return False

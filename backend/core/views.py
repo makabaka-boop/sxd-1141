@@ -6,7 +6,8 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from .models import (
     Store, InspectionItem, TaskTemplate,
-    InspectionTask, TaskReassignment, TaskItemResult, ReviewRecord
+    InspectionTask, TaskReassignment, TaskItemResult, ReviewRecord,
+    RectificationRecord
 )
 from .serializers import (
     UserSerializer, UserCreateSerializer, StoreSerializer,
@@ -14,7 +15,7 @@ from .serializers import (
     InspectionTaskListSerializer, InspectionTaskDetailSerializer,
     InspectionTaskCreateSerializer, TaskItemResultSerializer,
     TaskReassignmentSerializer, ReviewRecordSerializer,
-    BatchTaskCreateSerializer
+    RectificationRecordSerializer, BatchTaskCreateSerializer
 )
 
 
@@ -126,6 +127,18 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
         if status_filter:
             queryset = queryset.filter(status=status_filter)
 
+        rectification_status_filter = self.request.query_params.get('rectification_status')
+        if rectification_status_filter:
+            task_ids = []
+            for task in queryset:
+                if task.rectification_status == rectification_status_filter:
+                    task_ids.append(task.id)
+            queryset = queryset.filter(id__in=task_ids)
+
+        has_rectification = self.request.query_params.get('has_rectification')
+        if has_rectification == 'true':
+            queryset = queryset.filter(rectifications__isnull=False).distinct()
+
         return queryset.order_by('-created_at')
 
     def get_permissions(self):
@@ -166,6 +179,7 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
                     created_by=request.user,
                     deadline=data.get('deadline'),
                     remark=data.get('remark', ''),
+                    rectification_deadline_days=data.get('rectification_deadline_days', 3),
                     status='pending'
                 )
                 for item in template.items.all():
@@ -263,7 +277,7 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
         if is_approved is None:
             return Response({'error': '请指定复核结果'}, status=status.HTTP_400_BAD_REQUEST)
 
-        ReviewRecord.objects.create(
+        review_record = ReviewRecord.objects.create(
             task=task,
             reviewer=request.user,
             is_approved=is_approved,
@@ -275,7 +289,53 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
             task.status = 'finished'
         else:
             task.status = 'rejected'
+            if not rectification_deadline:
+                from datetime import timedelta
+                rectification_deadline = timezone.now() + timedelta(days=task.rectification_deadline_days)
+
+            round_number = task.current_rectification_round + 1
+            RectificationRecord.objects.create(
+                task=task,
+                round_number=round_number,
+                review_record=review_record,
+                rectification_deadline=rectification_deadline,
+            )
         task.reviewed_at = timezone.now()
+        task.save()
+
+        serializer = self.get_serializer(task)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def submit_rectification(self, request, pk=None):
+        task = self.get_object()
+        if task.status != 'rejected':
+            return Response({'error': '任务状态不允许提交整改'}, status=status.HTTP_400_BAD_REQUEST)
+        if request.user.profile.role != 'executor' or task.executor != request.user:
+            return Response({'error': '只有任务执行者可以提交整改'}, status=status.HTTP_403_FORBIDDEN)
+
+        description = request.data.get('description', '')
+        results = request.data.get('results', [])
+
+        for result_data in results:
+            result_id = result_data.get('id')
+            try:
+                result = TaskItemResult.objects.get(id=result_id, task=task)
+                result.result = result_data.get('result', result.result)
+                result.photo_placeholder = result_data.get('photo_placeholder', result.photo_placeholder)
+                result.rectification_suggestion = result_data.get('rectification_suggestion', result.rectification_suggestion)
+                result.is_pass = result_data.get('is_pass', result.is_pass)
+                result.save()
+            except TaskItemResult.DoesNotExist:
+                pass
+
+        latest_rect = task.rectifications.filter(submitted_at__isnull=True).order_by('-round_number').first()
+        if latest_rect:
+            latest_rect.description = description
+            latest_rect.submitted_at = timezone.now()
+            latest_rect.save()
+
+        task.status = 'reviewing'
         task.save()
 
         serializer = self.get_serializer(task)

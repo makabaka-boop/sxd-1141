@@ -4,7 +4,8 @@ import {
   LogoutOutlined, 
   UnorderedListOutlined, 
   DatabaseOutlined,
-  CheckCircleOutlined
+  CheckCircleOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -40,6 +41,13 @@ const AppLayout = ({ children }) => {
         onClick: () => navigate('/tasks'),
       },
     ];
+
+    items.push({
+      key: '/rectifications',
+      icon: <WarningOutlined />,
+      label: '整改跟踪',
+      onClick: () => navigate('/rectifications'),
+    });
 
     if (isReviewer()) {
       items.push({

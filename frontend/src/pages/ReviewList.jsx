@@ -10,9 +10,11 @@ import {
   Input, 
   DatePicker,
   message,
-  Radio
+  Radio,
+  Tabs,
+  Select
 } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, EyeOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, CloseCircleOutlined, EyeOutlined, WarningOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import api from '../utils/api';
@@ -20,12 +22,15 @@ import { useAuth } from '../context/AuthContext';
 
 const { Title } = Typography;
 const { TextArea } = Input;
+const { Option } = Select;
 
 const ReviewList = () => {
+  const [activeTab, setActiveTab] = useState('pending');
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [reviewModalVisible, setReviewModalVisible] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
+  const [rectificationStatusFilter, setRectificationStatusFilter] = useState();
   const [form] = Form.useForm();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -36,7 +41,13 @@ const ReviewList = () => {
     finished: { color: 'success', text: '已结案' },
   };
 
-  const fetchTasks = async () => {
+  const rectificationStatusMap = {
+    rectifying: { color: 'processing', text: '整改中' },
+    pending_review: { color: 'warning', text: '待复核' },
+    overdue: { color: 'error', text: '已超期' },
+  };
+
+  const fetchPendingTasks = async () => {
     setLoading(true);
     try {
       const response = await api.get('/tasks/', { params: { status: 'reviewing' } });
@@ -48,9 +59,29 @@ const ReviewList = () => {
     }
   };
 
+  const fetchRectificationTasks = async () => {
+    setLoading(true);
+    try {
+      const params = { has_rectification: 'true' };
+      if (rectificationStatusFilter) {
+        params.rectification_status = rectificationStatusFilter;
+      }
+      const response = await api.get('/tasks/', { params });
+      setTasks(response.data);
+    } catch (error) {
+      message.error('获取整改任务列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    fetchTasks();
-  }, []);
+    if (activeTab === 'pending') {
+      fetchPendingTasks();
+    } else {
+      fetchRectificationTasks();
+    }
+  }, [activeTab, rectificationStatusFilter]);
 
   const handleReview = async (values) => {
     try {
@@ -63,13 +94,17 @@ const ReviewList = () => {
       setReviewModalVisible(false);
       form.resetFields();
       setSelectedTask(null);
-      fetchTasks();
+      if (activeTab === 'pending') {
+        fetchPendingTasks();
+      } else {
+        fetchRectificationTasks();
+      }
     } catch (error) {
       message.error('复核失败');
     }
   };
 
-  const columns = [
+  const pendingColumns = [
     {
       title: '任务标题',
       dataIndex: 'title',
@@ -130,16 +165,140 @@ const ReviewList = () => {
     },
   ];
 
+  const rectificationColumns = [
+    {
+      title: '任务标题',
+      dataIndex: 'title',
+      key: 'title',
+      render: (text, record) => (
+        <a onClick={() => navigate(`/tasks/${record.id}`)}>{text}</a>
+      ),
+    },
+    {
+      title: '门店',
+      dataIndex: 'store_name',
+      key: 'store_name',
+    },
+    {
+      title: '执行者',
+      dataIndex: ['executor_detail', 'username'],
+      key: 'executor',
+    },
+    {
+      title: '任务状态',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status) => {
+        const info = statusMap[status] || { color: 'default', text: status };
+        return <Tag color={info.color}>{info.text}</Tag>;
+      },
+    },
+    {
+      title: '整改状态',
+      dataIndex: 'rectification_status',
+      key: 'rectification_status',
+      render: (status) => {
+        if (!status) return <span style={{ color: '#999' }}>-</span>;
+        const info = rectificationStatusMap[status] || { color: 'default', text: status };
+        return <Tag color={info.color} icon={status === 'overdue' ? <WarningOutlined /> : null}>{info.text}</Tag>;
+      },
+    },
+    {
+      title: '整改轮次',
+      dataIndex: 'current_rectification_round',
+      key: 'round',
+      render: (round) => round ? `第${round}轮` : '-',
+    },
+    {
+      title: '最近整改提交',
+      dataIndex: 'latest_rectification_submitted_at',
+      key: 'submitted_at',
+      render: (date) => date ? dayjs(date).format('YYYY-MM-DD HH:mm') : <span style={{ color: '#999' }}>未提交</span>,
+    },
+    {
+      title: '超期',
+      dataIndex: 'latest_rectification_is_overdue',
+      key: 'is_overdue',
+      render: (overdue) => overdue
+        ? <Tag color="error" icon={<WarningOutlined />}>已超期</Tag>
+        : <Tag color="success">未超期</Tag>,
+    },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_, record) => (
+        <Space size="small">
+          <Button 
+            type="link" 
+            icon={<EyeOutlined />} 
+            onClick={() => navigate(`/tasks/${record.id}`)}
+          >
+            查看详情
+          </Button>
+          {record.status === 'reviewing' && (
+            <Button 
+              type="primary" 
+              size="small"
+              onClick={() => {
+                setSelectedTask(record);
+                setReviewModalVisible(true);
+              }}
+            >
+              复核
+            </Button>
+          )}
+        </Space>
+      ),
+    },
+  ];
+
+  const tabItems = [
+    {
+      key: 'pending',
+      label: '待复核任务',
+      children: (
+        <Table 
+          columns={pendingColumns} 
+          dataSource={tasks} 
+          rowKey="id" 
+          loading={loading}
+        />
+      ),
+    },
+    {
+      key: 'rectification',
+      label: '整改任务视图',
+      children: (
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <Select
+              placeholder="筛选整改状态"
+              style={{ width: 200 }}
+              allowClear
+              value={rectificationStatusFilter}
+              onChange={setRectificationStatusFilter}
+            >
+              {Object.entries(rectificationStatusMap).map(([key, value]) => (
+                <Option key={key} value={key}>{value.text}</Option>
+              ))}
+            </Select>
+          </div>
+          <Table 
+            columns={rectificationColumns} 
+            dataSource={tasks} 
+            rowKey="id" 
+            loading={loading}
+          />
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div>
-      <Title level={3} style={{ marginBottom: 16 }}>待复核任务</Title>
+      <Title level={3} style={{ marginBottom: 16 }}>复核任务</Title>
       
-      <Table 
-        columns={columns} 
-        dataSource={tasks} 
-        rowKey="id" 
-        loading={loading}
-      />
+      <Tabs activeKey={activeTab} onChange={setActiveTab} items={tabItems} />
 
       <Modal
         title="任务复核"
@@ -156,6 +315,9 @@ const ReviewList = () => {
           <p><strong>任务：</strong>{selectedTask?.title}</p>
           <p><strong>门店：</strong>{selectedTask?.store_name}</p>
           <p><strong>执行者：</strong>{selectedTask?.executor_detail?.username}</p>
+          {selectedTask?.current_rectification_round > 0 && (
+            <p><strong>整改轮次：</strong>第{selectedTask.current_rectification_round}轮</p>
+          )}
         </div>
         
         <Form form={form} layout="vertical" onFinish={handleReview}>

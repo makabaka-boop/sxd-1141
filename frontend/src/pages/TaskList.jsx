@@ -10,6 +10,7 @@ import {
   Form, 
   Input, 
   DatePicker,
+  InputNumber,
   message,
   Popconfirm,
   Row,
@@ -19,8 +20,9 @@ import {
   PlusOutlined, 
   EyeOutlined, 
   SwapOutlined,
-  PlayCircleOutlined,
-  SendOutlined
+  PlayCircleOutlined, 
+  SendOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
@@ -178,6 +180,27 @@ const TaskList = () => {
         const info = statusMap[status] || { color: 'default', text: status };
         return <Tag color={info.color}>{info.text}</Tag>;
       },
+    },
+    {
+      title: '整改状态',
+      dataIndex: 'rectification_status',
+      key: 'rectification_status',
+      render: (status) => {
+        if (!status) return <span style={{ color: '#999' }}>-</span>;
+        const rectMap = {
+          rectifying: { color: 'processing', text: '整改中' },
+          pending_review: { color: 'warning', text: '待复核' },
+          overdue: { color: 'error', text: '已超期' },
+        };
+        const info = rectMap[status] || { color: 'default', text: status };
+        return <Tag color={info.color} icon={status === 'overdue' ? <WarningOutlined /> : null}>{info.text}</Tag>;
+      },
+    },
+    {
+      title: '整改轮次',
+      dataIndex: 'current_rectification_round',
+      key: 'round',
+      render: (round) => round ? `第${round}轮` : '-',
     },
     {
       title: '最新转派',
@@ -352,6 +375,9 @@ const TaskList = () => {
           <Form.Item name="deadline" label="截止时间">
             <DatePicker showTime style={{ width: '100%' }} />
           </Form.Item>
+          <Form.Item name="rectification_deadline_days" label="默认整改时限(天)" initialValue={3}>
+            <InputNumber min={1} max={30} style={{ width: '100%' }} placeholder="默认3天" />
+          </Form.Item>
           <Form.Item name="remark" label="备注">
             <TextArea rows={3} placeholder="请输入备注" />
           </Form.Item>
@@ -411,6 +437,9 @@ const TaskList = () => {
           </Row>
           <Form.Item name="deadline" label="截止时间">
             <DatePicker showTime style={{ width: '100%' }} />
+          </Form.Item>
+          <Form.Item name="rectification_deadline_days" label="默认整改时限(天)" initialValue={3}>
+            <InputNumber min={1} max={30} style={{ width: '100%' }} placeholder="默认3天" />
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <TextArea rows={3} placeholder="请输入备注" />

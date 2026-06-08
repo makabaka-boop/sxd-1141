@@ -2,7 +2,8 @@ from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import (
     UserProfile, Store, InspectionItem, TaskTemplate,
-    InspectionTask, TaskReassignment, TaskItemResult, ReviewRecord
+    InspectionTask, TaskReassignment, TaskItemResult, ReviewRecord,
+    RectificationRecord
 )
 
 
@@ -116,17 +117,35 @@ class ReviewRecordSerializer(serializers.ModelSerializer):
         read_only_fields = ['reviewer', 'created_at']
 
 
+class RectificationRecordSerializer(serializers.ModelSerializer):
+    review_record_detail = ReviewRecordSerializer(source='review_record', read_only=True)
+    is_overdue = serializers.BooleanField(read_only=True)
+
+    class Meta:
+        model = RectificationRecord
+        fields = ['id', 'task', 'round_number', 'review_record', 'review_record_detail',
+                  'description', 'rectification_deadline', 'submitted_at',
+                  'is_overdue', 'created_at', 'updated_at']
+        read_only_fields = ['round_number', 'submitted_at', 'created_at', 'updated_at']
+
+
 class InspectionTaskListSerializer(serializers.ModelSerializer):
     store_name = serializers.CharField(source='store.name', read_only=True)
     executor_detail = UserSerializer(source='executor', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     latest_reassignment_summary = serializers.SerializerMethodField()
+    rectification_status = serializers.CharField(read_only=True)
+    current_rectification_round = serializers.IntegerField(read_only=True)
+    latest_rectification_submitted_at = serializers.SerializerMethodField()
+    latest_rectification_is_overdue = serializers.SerializerMethodField()
 
     class Meta:
         model = InspectionTask
         fields = ['id', 'title', 'store', 'store_name', 'executor', 'executor_detail',
                   'status', 'status_display', 'deadline', 'created_at', 'updated_at',
-                  'executed_at', 'latest_reassignment_summary']
+                  'executed_at', 'latest_reassignment_summary', 'rectification_status',
+                  'current_rectification_round', 'latest_rectification_submitted_at',
+                  'latest_rectification_is_overdue']
 
     def get_latest_reassignment_summary(self, obj):
         latest = obj.latest_reassignment
@@ -143,6 +162,14 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
             }
         return None
 
+    def get_latest_rectification_submitted_at(self, obj):
+        latest = obj.rectifications.order_by('-round_number').first()
+        return latest.submitted_at if latest else None
+
+    def get_latest_rectification_is_overdue(self, obj):
+        latest = obj.rectifications.order_by('-round_number').first()
+        return latest.is_overdue if latest else False
+
 
 class InspectionTaskDetailSerializer(serializers.ModelSerializer):
     store_detail = StoreSerializer(source='store', read_only=True)
@@ -154,6 +181,10 @@ class InspectionTaskDetailSerializer(serializers.ModelSerializer):
     item_results = TaskItemResultSerializer(source='taskitemresult_set', many=True, read_only=True)
     reassignments = TaskReassignmentSerializer(many=True, read_only=True)
     reviews = ReviewRecordSerializer(many=True, read_only=True)
+    rectifications = RectificationRecordSerializer(many=True, read_only=True)
+    rectification_status = serializers.CharField(read_only=True)
+    current_rectification_round = serializers.IntegerField(read_only=True)
+    timeline = serializers.SerializerMethodField()
 
     class Meta:
         model = InspectionTask
@@ -161,7 +192,62 @@ class InspectionTaskDetailSerializer(serializers.ModelSerializer):
                   'executor', 'executor_detail', 'reviewer', 'reviewer_detail',
                   'created_by', 'created_by_detail', 'status', 'status_display',
                   'deadline', 'remark', 'created_at', 'updated_at', 'executed_at',
-                  'reviewed_at', 'item_results', 'reassignments', 'reviews']
+                  'reviewed_at', 'item_results', 'reassignments', 'reviews',
+                  'rectifications', 'rectification_status', 'current_rectification_round',
+                  'rectification_deadline_days', 'timeline']
+
+    def get_timeline(self, obj):
+        events = []
+        events.append({
+            'type': 'created',
+            'label': '任务创建',
+            'time': obj.created_at,
+            'detail': f'创建人: {obj.created_by.username if obj.created_by else "未知"}',
+        })
+        if obj.executed_at:
+            latest_rect = obj.rectifications.filter(submitted_at__isnull=False).order_by('-submitted_at').first()
+            if latest_rect:
+                events.append({
+                    'type': 'rectification_submitted',
+                    'label': f'整改提交(第{latest_rect.round_number}轮)',
+                    'time': latest_rect.submitted_at,
+                    'detail': latest_rect.description or '',
+                })
+            else:
+                events.append({
+                    'type': 'executed',
+                    'label': '首次提交执行结果',
+                    'time': obj.executed_at,
+                    'detail': f'执行人: {obj.executor.username if obj.executor else "未知"}',
+                })
+        for review in obj.reviews.all():
+            if not review.is_approved:
+                rect = obj.rectifications.filter(review_record=review).first()
+                events.append({
+                    'type': 'rejected',
+                    'label': f'复核驳回(第{rect.round_number}轮整改)' if rect else '复核驳回',
+                    'time': review.created_at,
+                    'detail': review.comment or '',
+                })
+            else:
+                events.append({
+                    'type': 'approved',
+                    'label': '复核通过',
+                    'time': review.created_at,
+                    'detail': review.comment or '',
+                })
+        for rect in obj.rectifications.all():
+            if rect.submitted_at:
+                already = any(e['type'] == 'rectification_submitted' and e.get('detail') == rect.description for e in events)
+                if not already:
+                    events.append({
+                        'type': 'rectification_submitted',
+                        'label': f'整改提交(第{rect.round_number}轮)',
+                        'time': rect.submitted_at,
+                        'detail': rect.description or '',
+                    })
+        events.sort(key=lambda e: e['time'] if e['time'] else obj.created_at)
+        return events
 
 
 class InspectionTaskCreateSerializer(serializers.ModelSerializer):
@@ -170,7 +256,7 @@ class InspectionTaskCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = InspectionTask
         fields = ['id', 'title', 'store', 'template', 'executor', 'reviewer',
-                  'deadline', 'remark', 'item_ids']
+                  'deadline', 'remark', 'item_ids', 'rectification_deadline_days']
 
     def create(self, validated_data):
         item_ids = validated_data.pop('item_ids', [])
@@ -191,3 +277,4 @@ class BatchTaskCreateSerializer(serializers.Serializer):
     reviewer_id = serializers.IntegerField(required=False, allow_null=True)
     deadline = serializers.DateTimeField(required=False, allow_null=True)
     remark = serializers.CharField(required=False, allow_blank=True)
+    rectification_deadline_days = serializers.IntegerField(required=False, default=3)
