@@ -191,16 +191,25 @@ class InspectionTaskListSerializer(serializers.ModelSerializer):
 
     def get_reminder_count(self, obj):
         from .models import ReminderRecord
-        return ReminderRecord.objects.filter(rectification__task=obj).count()
+        latest_rect = obj.rectifications.order_by('-round_number').first()
+        if not latest_rect:
+            return 0
+        return ReminderRecord.objects.filter(rectification=latest_rect).count()
 
     def get_latest_reminder_at(self, obj):
         from .models import ReminderRecord
-        latest = ReminderRecord.objects.filter(rectification__task=obj).order_by('-created_at').first()
+        latest_rect = obj.rectifications.order_by('-round_number').first()
+        if not latest_rect:
+            return None
+        latest = ReminderRecord.objects.filter(rectification=latest_rect).order_by('-created_at').first()
         return latest.created_at if latest else None
 
     def get_reminder_response_status(self, obj):
         from .models import ReminderRecord
-        reminders = ReminderRecord.objects.filter(rectification__task=obj)
+        latest_rect = obj.rectifications.order_by('-round_number').first()
+        if not latest_rect:
+            return 'no_reminder'
+        reminders = ReminderRecord.objects.filter(rectification=latest_rect)
         if not reminders.exists():
             return 'no_reminder'
         if reminders.filter(is_responded=False).exists():

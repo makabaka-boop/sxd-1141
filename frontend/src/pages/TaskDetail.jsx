@@ -47,6 +47,7 @@ const TaskDetail = () => {
   const [submitLoading, setSubmitLoading] = useState(false);
   const [rectificationLoading, setRectificationLoading] = useState(false);
   const [rectificationDescription, setRectificationDescription] = useState('');
+  const [reminderResponseNote, setReminderResponseNote] = useState('');
   const [remindModalVisible, setRemindModalVisible] = useState(false);
   const [remindNote, setRemindNote] = useState('');
   const [remindLoading, setRemindLoading] = useState(false);
@@ -135,13 +136,20 @@ const TaskDetail = () => {
         is_pass: values[`pass_${item.id}`],
       }));
 
-      setRectificationLoading(true);
-      await api.post(`/tasks/${id}/submit_rectification/`, {
+      const data = {
         description: rectificationDescription,
         results,
-      });
+      };
+      const unrespondedReminders = getLatestUnrespondedReminders();
+      if (unrespondedReminders.length > 0) {
+        data.reminder_response_note = reminderResponseNote || '已提交整改';
+      }
+
+      setRectificationLoading(true);
+      await api.post(`/tasks/${id}/submit_rectification/`, data);
       message.success('整改提交成功');
       setRectificationDescription('');
+      setReminderResponseNote('');
       fetchTaskDetail();
     } catch (error) {
       message.error('整改提交失败');
@@ -179,11 +187,15 @@ const TaskDetail = () => {
 
   const getLatestReminders = () => {
     if (!task?.rectifications) return [];
-    const latestRect = task.rectifications
-      .filter(r => !r.submitted_at)
-      .sort((a, b) => b.round_number - a.round_number)[0];
+    const sorted = [...task.rectifications].sort((a, b) => b.round_number - a.round_number);
+    const latestRect = sorted[0];
     if (!latestRect?.reminders) return [];
     return latestRect.reminders;
+  };
+
+  const getLatestRectification = () => {
+    if (!task?.rectifications) return null;
+    return [...task.rectifications].sort((a, b) => b.round_number - a.round_number)[0] || null;
   };
 
   const handleRemind = async () => {
@@ -263,7 +275,12 @@ const TaskDetail = () => {
   if (!task) return <div>加载中...</div>;
 
   const latestRect = getLatestPendingRectification();
+  const latestRectAll = getLatestRectification();
   const latestRejection = getLatestReviewRejection();
+  const latestReminders = getLatestReminders();
+  const unrespondedReminders = getLatestUnrespondedReminders();
+  const showRectificationCard = (task.status === 'rejected' && latestRect && latestRejection) || 
+    (task.status === 'reviewing' && latestRectAll && latestReminders.length > 0);
 
   return (
     <div>
@@ -314,13 +331,14 @@ const TaskDetail = () => {
             </Descriptions>
           </Card>
 
-          {task.status === 'rejected' && latestRect && latestRejection && (
+          {showRectificationCard && (
             <Card 
               title={
                 <Space>
                   <WarningOutlined style={{ color: '#ff4d4f' }} />
                   <span>整改跟踪</span>
-                  <Tag color="error">第{latestRect.round_number}轮整改</Tag>
+                  <Tag color="error">第{(latestRect || latestRectAll).round_number}轮整改</Tag>
+                  {task.status === 'reviewing' && <Tag color="warning">待复核</Tag>}
                 </Space>
               }
               extra={canRemind() && (
@@ -335,40 +353,42 @@ const TaskDetail = () => {
               )}
               style={{ marginBottom: 16 }}
             >
-              {latestRect.is_overdue && (
+              {(latestRect || latestRectAll).is_overdue && !(latestRect || latestRectAll).submitted_at && (
                 <Alert
                   message="整改已超期"
-                  description={`整改截止时间为 ${dayjs(latestRect.rectification_deadline).format('YYYY-MM-DD HH:mm')}，已超过整改时限`}
+                  description={`整改截止时间为 ${dayjs((latestRect || latestRectAll).rectification_deadline).format('YYYY-MM-DD HH:mm')}，已超过整改时限`}
                   type="error"
                   showIcon
                   icon={<WarningOutlined />}
                   style={{ marginBottom: 16 }}
                 />
               )}
-              <Descriptions column={1} bordered size="small" style={{ marginBottom: 16 }}>
-                <Descriptions.Item label="复核意见">
-                  {latestRejection.comment || '无'}
-                </Descriptions.Item>
-                <Descriptions.Item label="复核人">
-                  {latestRejection.reviewer_detail?.username || '未知'}
-                </Descriptions.Item>
-                <Descriptions.Item label="整改截止时间">
-                  <Space>
-                    <ClockCircleOutlined />
-                    {latestRect.rectification_deadline 
-                      ? dayjs(latestRect.rectification_deadline).format('YYYY-MM-DD HH:mm') 
-                      : '无'}
-                  </Space>
-                </Descriptions.Item>
-              </Descriptions>
+              {latestRejection && (
+                <Descriptions column={1} bordered size="small" style={{ marginBottom: 16 }}>
+                  <Descriptions.Item label="复核意见">
+                    {latestRejection.comment || '无'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="复核人">
+                    {latestRejection.reviewer_detail?.username || '未知'}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="整改截止时间">
+                    <Space>
+                      <ClockCircleOutlined />
+                      {(latestRect || latestRectAll).rectification_deadline 
+                        ? dayjs((latestRect || latestRectAll).rectification_deadline).format('YYYY-MM-DD HH:mm') 
+                        : '无'}
+                    </Space>
+                  </Descriptions.Item>
+                </Descriptions>
+              )}
 
-              {getLatestReminders().length > 0 && (
+              {latestReminders.length > 0 && (
                 <div style={{ marginBottom: 16 }}>
                   <Text strong style={{ display: 'block', marginBottom: 8 }}>
                     <BellOutlined style={{ marginRight: 4, color: '#eb2f96' }} />
                     催办记录
                   </Text>
-                  {getLatestReminders().map((reminder) => (
+                  {latestReminders.map((reminder) => (
                     <div 
                       key={reminder.id} 
                       style={{ 
@@ -433,6 +453,19 @@ const TaskDetail = () => {
                     onChange={(e) => setRectificationDescription(e.target.value)}
                     style={{ marginBottom: 12 }}
                   />
+                  {unrespondedReminders.length > 0 && (
+                    <div style={{ marginBottom: 12 }}>
+                      <Text strong style={{ display: 'block', marginBottom: 8 }}>
+                        催办处理说明 <Text type="secondary" style={{ fontWeight: 'normal' }}>(选填，提交整改后未响应的催办将自动标记为已响应)</Text>
+                      </Text>
+                      <TextArea
+                        rows={3}
+                        placeholder="请补充对催办的处理说明（选填）"
+                        value={reminderResponseNote}
+                        onChange={(e) => setReminderResponseNote(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </Card>

@@ -144,7 +144,12 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
         if reminder_status_filter:
             task_ids = []
             for task in queryset:
-                reminders = ReminderRecord.objects.filter(rectification__task=task)
+                latest_rect = task.rectifications.order_by('-round_number').first()
+                if not latest_rect:
+                    if reminder_status_filter == 'no_reminder':
+                        task_ids.append(task.id)
+                    continue
+                reminders = ReminderRecord.objects.filter(rectification=latest_rect)
                 if reminder_status_filter == 'no_reminder':
                     if not reminders.exists():
                         task_ids.append(task.id)
@@ -353,6 +358,13 @@ class InspectionTaskViewSet(viewsets.ModelViewSet):
             latest_rect.description = description
             latest_rect.submitted_at = timezone.now()
             latest_rect.save()
+
+            reminder_response_note = request.data.get('reminder_response_note', '')
+            for reminder in latest_rect.reminders.filter(is_responded=False):
+                reminder.is_responded = True
+                reminder.response_note = reminder_response_note or '已提交整改'
+                reminder.responded_at = timezone.now()
+                reminder.save()
 
         task.status = 'reviewing'
         task.save()

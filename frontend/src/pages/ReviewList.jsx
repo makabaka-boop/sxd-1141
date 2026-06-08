@@ -32,6 +32,7 @@ const ReviewList = () => {
   const [selectedTask, setSelectedTask] = useState(null);
   const [rectificationStatusFilter, setRectificationStatusFilter] = useState();
   const [reminderStatusFilter, setReminderStatusFilter] = useState();
+  const [pendingReminderStatusFilter, setPendingReminderStatusFilter] = useState();
   const [form] = Form.useForm();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -57,7 +58,11 @@ const ReviewList = () => {
   const fetchPendingTasks = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/tasks/', { params: { status: 'reviewing' } });
+      const params = { status: 'reviewing' };
+      if (pendingReminderStatusFilter) {
+        params.reminder_status = pendingReminderStatusFilter;
+      }
+      const response = await api.get('/tasks/', { params });
       setTasks(response.data);
     } catch (error) {
       message.error('获取任务列表失败');
@@ -91,7 +96,7 @@ const ReviewList = () => {
     } else {
       fetchRectificationTasks();
     }
-  }, [activeTab, rectificationStatusFilter, reminderStatusFilter]);
+  }, [activeTab, rectificationStatusFilter, reminderStatusFilter, pendingReminderStatusFilter]);
 
   const handleReview = async (values) => {
     try {
@@ -139,6 +144,24 @@ const ReviewList = () => {
       key: 'status',
       render: (status) => {
         const info = statusMap[status] || { color: 'default', text: status };
+        return <Tag color={info.color}>{info.text}</Tag>;
+      },
+    },
+    {
+      title: '催办次数',
+      dataIndex: 'reminder_count',
+      key: 'reminder_count',
+      render: (count) => count > 0 ? (
+        <Tag color="#eb2f96" icon={<BellOutlined />}>{count}次</Tag>
+      ) : <span style={{ color: '#999' }}>0</span>,
+    },
+    {
+      title: '催办响应',
+      dataIndex: 'reminder_response_status',
+      key: 'reminder_response_status',
+      render: (status) => {
+        if (!status) return <span style={{ color: '#999' }}>-</span>;
+        const info = reminderStatusMap[status] || { color: 'default', text: status };
         return <Tag color={info.color}>{info.text}</Tag>;
       },
     },
@@ -291,12 +314,27 @@ const ReviewList = () => {
       key: 'pending',
       label: '待复核任务',
       children: (
-        <Table 
-          columns={pendingColumns} 
-          dataSource={tasks} 
-          rowKey="id" 
-          loading={loading}
-        />
+        <div>
+          <div style={{ marginBottom: 16 }}>
+            <Select
+              placeholder="筛选催办响应状态"
+              style={{ width: 200 }}
+              allowClear
+              value={pendingReminderStatusFilter}
+              onChange={setPendingReminderStatusFilter}
+            >
+              {Object.entries(reminderStatusMap).map(([key, value]) => (
+                <Option key={key} value={key}>{value.text}</Option>
+              ))}
+            </Select>
+          </div>
+          <Table 
+            columns={pendingColumns} 
+            dataSource={tasks} 
+            rowKey="id" 
+            loading={loading}
+          />
+        </div>
       ),
     },
     {
